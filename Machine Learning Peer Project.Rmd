@@ -1,0 +1,137 @@
+---
+title: "Machine Learning Peer Project"
+author: "Kim Kirk"
+date: "May 14, 2018"
+output:
+  html_document: default
+  pdf_document: default
+fig.cap: yes
+---
+# Supervised Machine Learning Classifier of Human Activity Recognition
+### Predicting quality of personal exercise activity as part of the quantified self movement
+
+## Executive Summary
+The business question, "How well do members of the quantified self movement perform weight lifting exercises as part of their personal activity?" was answered. Weight Lifting Exercise Dataset was imported, cleaned, and modeled for how well subjects performed their weight lifitng exercises. The outcome and predictor variables were identified. Both the outcome variable (CLASSE) and predictor variables were analyzed for missing values, outliers, correlation, etc. ; see "Data Processing" for additional details. Feature engineering was conducted to select and transform relevant variables. The classification model was created using Random Forest algorithm given the categorical nature of the outcome variable and several predictor variables, the highly non-linear relationship between outcome and predictor variables, the multiclass nature of the outcome variable, and no need for the assumption of normality of the predictor variables. The classifier had an out-of-sample accuracy rate of 99.82%.
+
+
+## Model Selection and Creation
+The data set is imported as are required packages. Seed is set for reproducibility. 
+```{r}
+#import training data set
+path <- file.path(paste(getwd(), 'pml-training.csv', sep = "/"))
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(url, path)
+trainingImport <- read.csv("pml-training.csv", header = TRUE, stringsAsFactors = FALSE)
+
+##check environment for packages and install or not as required
+##credit Matthew on StackOverflow https://stackoverflow.com/users/4125693/matthew
+using<-function(...) {
+    libs<-unlist(list(...))
+    req<-unlist(lapply(libs,require,character.only=TRUE))
+    need<-libs[req==FALSE]
+    n<-length(need)
+    if(n>0){
+        libsmsg<-if(n>2) paste(paste(need[1:(n-1)],collapse=", "),",",sep="") else need[1]
+        print(libsmsg)
+        if(n>1){
+            libsmsg<-paste(libsmsg," and ", need[n],sep="")
+        }
+        libsmsg<-paste("The following packages could not be found: ",libsmsg,"\n\r\n\rInstall missing packages?",collapse="")
+        if(winDialog(type = c("yesno"), libsmsg)=="YES"){       
+            install.packages(need)
+            lapply(need,require,character.only=TRUE)
+        }
+    }
+}
+
+##install and load packages 
+using("dplyr")
+using("caret")
+using("mlbench")
+
+#set seed for reproducibility
+set.seed(550)
+```
+
+## Detecting Issues in the Data Set
+Redundant Predictor Variables
+```{r}
+#find and remove predictor variables that are not needed for predictive purposes
+indexPositions <- grep("^kurtosis|skewness|max|min|amplitude|var|avg|stddev", colnames(trainingImport), value = FALSE)
+trainingDataSet <- select(trainingImport, 1:160, -(indexPositions))
+```
+
+Outliers
+```{r, fig.height=5, fig.width=3 ,fig.cap="Outliers for two predictor variables"}
+boxplot(summary(trainingDataSet$magnet_forearm_z), main = "Magnet_Forearm_Z Variable", xlab = "magnet_forearm_z")
+boxplot(summary(trainingDataSet$accel_forearm_x), main = "Accel_Forearm_X Variable", xlab = "accel_forearm_x")
+
+```
+
+Variable Imbalance: See Appendix A
+```{r balance, fig.height=5, fig.width=3, fig.cap="Values balance for CLASSE outcome variable", echo = FALSE, eval=FALSE}
+barplot(table(trainingDataSet$classe), main = "Class Balance", xlab = "Classe Variable", ylab = "Count", col = rainbow(5))
+```
+
+## Model Selection
+Random Forest machine learning algorithm from the "caret" package is selected because it can handle issues found in the data set during the data exploration phase such as:
+- categorical nature of the outcome variable to create a classification model
+- mixed data types for predictor variables (quantitative and qualitative) without the requirement to create dummy variables or one-hot encoding
+- non-linear relationship between outcome and predictor variables
+- multiclass nature of the outcome variable
+- no assumption of normality of the predictor variables is required
+- increased interpretability for quantitative predictor variables that could not be transformed with a BoxCox or Log transformation
+- apply binning to imbalanced data
+
+```{r}
+
+#find and remove correlated predictor variables to reduce redundancy and improve prediction
+correlationMatrix <- cor(trainingDataSet[,-c(1, 2, 5, 6, 60)])
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.5, names = TRUE)
+print(highlyCorrelated)
+trainingDataSet <- select(trainingDataSet, -one_of(highlyCorrelated))
+
+#remove predictor variable that is not needed for predictive purposes
+trainingDataSet <- trainingDataSet[,-(1)]
+
+#transform outcome variable
+trainingDataSet$classe <- as.factor(trainingDataSet$classe)
+
+#tune parameters for resampling/validation purposes
+ctrl = trainControl(method="cv", number = 3, selectionFunction = "oneSE")
+
+#partition training data into training and validation data sets
+inTraining <- createDataPartition(trainingDataSet$classe, p = .75, list = FALSE)
+    training <- trainingDataSet[ inTraining,]
+    testing  <- trainingDataSet[-inTraining,]
+    
+#train the model
+trained <- train(classe ~ .,
+                     data = training, method = "rf",
+                     trControl = ctrl, metric = "Accuracy", 
+                     preProcess = c("center", "scale"))
+
+#make predictions using validation data set
+predicted <- predict(trained, newdata = testing, type = "raw")
+```
+
+## Cross Validation and Expected Out-of-Sample Error Rate
+- Cross validation with 3 folds is used with a selection function of oneSE because the tuning parameter associated with the best performance may over fit; the simplest model within one standard error of the empirically optimal model is the better choice [Breiman et al.(1984)].
+- The accuracy rate, which is overall how often the classifier is correct, is 99.84% which is high. 
+- The expected out-of-sample error rate is 0.16% which is low. 
+
+```{r}
+
+#check accuracy of model
+confusionMatrix <- confusionMatrix(predicted, testing[,27], mode = "everything")
+confusionMatrix
+
+```
+
+
+
+# Appendix A
+```{r , ref.label = 'balance', eval = TRUE}
+
+```
+
